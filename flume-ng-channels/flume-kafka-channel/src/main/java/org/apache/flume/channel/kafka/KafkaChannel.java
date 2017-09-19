@@ -39,6 +39,7 @@ import org.apache.flume.conf.LogPrivacyUtil;
 import org.apache.flume.event.EventBuilder;
 import org.apache.flume.instrumentation.kafka.KafkaChannelCounter;
 import org.apache.flume.source.avro.AvroFlumeEvent;
+import org.apache.kafka.clients.consumer.CommitFailedException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -564,10 +565,22 @@ public class KafkaChannel extends BasicChannelSemantics {
       } else {
         if (consumerAndRecords.get().failedEvents.isEmpty() && eventTaken) {
           long startTime = System.nanoTime();
-          consumerAndRecords.get().commitOffsets();
+          ConsumerAndRecords consumerAndRecords = KafkaChannel.this.consumerAndRecords.get();
+          // SEE: https://jira.bekitzur.com/browse/NB-918
+          try {
+            consumerAndRecords.commitOffsets();
+          } catch (CommitFailedException ex) {
+              String errMsg = String.format("Exiting on %s", ex.getClass());
+              logger.error(errMsg, ex);
+              if (ex.getMessage().contains("Commit cannot be completed since" +
+                      " the group has already rebalanced and assigned the" +
+                      " partitions to another member.")) {
+                System.exit(1);
+              }
+          }
           long endTime = System.nanoTime();
           counter.addToKafkaCommitTimer((endTime - startTime) / (1000 * 1000));
-          consumerAndRecords.get().printCurrentAssignment();
+          consumerAndRecords.printCurrentAssignment();
         }
         counter.addToEventTakeSuccessCount(Long.valueOf(events.get().size()));
         events.get().clear();
